@@ -62,6 +62,10 @@ export function AgentPanel() {
   // Only show for Hermes agents
   if (!selected || !hero || hero.agent !== 'hermes') return null;
 
+  // Safety: ensure required nested fields exist
+  const tokens = hero.tokens ?? { input: 0, output: 0 };
+  const teamColor = hero.teamColor ?? 0;
+
   const st = STATE_STYLE[hero.state];
   const job = hero.state === 'working' ? hero.toolDetail ?? hero.currentTool : undefined;
 
@@ -149,12 +153,12 @@ export function AgentPanel() {
         justifyContent: 'space-between',
         alignItems: 'start',
         gap: 8,
-        boxShadow: `inset 3px 0 0 ${teamColorHex(hero.teamColor)}`,
+        boxShadow: `inset 3px 0 0 ${teamColorHex(teamColor)}`,
       }}>
         <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
           <span style={{
             width: 14, height: 14, borderRadius: '50%',
-            background: teamColorHex(hero.teamColor),
+            background: teamColorHex(teamColor),
             border: '1px solid rgba(0,0,0,.4)',
             marginTop: 3, flex: 'none',
           }} />
@@ -191,11 +195,11 @@ export function AgentPanel() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <div className="stat-tile">
           <div className="px" style={{ fontSize: 10, opacity: 0.55, textTransform: 'uppercase' }}>Output</div>
-          <div style={{ fontSize: 14 }}>{formatK(hero.tokens.output)}</div>
+          <div style={{ fontSize: 14 }}>{formatK(tokens.output)}</div>
         </div>
         <div className="stat-tile">
           <div className="px" style={{ fontSize: 10, opacity: 0.55, textTransform: 'uppercase' }}>Input</div>
-          <div style={{ fontSize: 14 }}>{formatK(hero.tokens.input)}</div>
+          <div style={{ fontSize: 14 }}>{formatK(tokens.input)}</div>
         </div>
       </div>
 

@@ -311,7 +311,17 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     });
   }
 
-  await app.listen({ port: opts.port, host });
+  try {
+    await app.listen({ port: opts.port, host });
+  } catch (err) {
+    // tsx watch restarts may race with the previous instance still releasing
+    // the port — EADDRINUSE is harmless when the old server is still running.
+    if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      app.log.warn(`Port ${opts.port} already in use — server likely already running (tsx watch restart race)`);
+      return;
+    }
+    throw err;
+  }
 
   const address = app.server.address();
   const actualPort = typeof address === 'object' && address ? address.port : opts.port;

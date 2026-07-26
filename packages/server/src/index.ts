@@ -14,5 +14,9 @@ process.on('uncaughtException', (err) => {
 
 const demo = process.argv.includes('--demo');
 const server = await startServer({ port: SERVER_PORT, host: '127.0.0.1', demo });
-console.log(`Age of Agents server (dev): ${server.url} (ws: /ws)`);
+if (server) {
+  console.log(`Age of Agents server (dev): ${server.url} (ws: /ws)`);
+} else {
+  console.log(`Age of Agents server (dev): port ${SERVER_PORT} in use — using existing server`);
+}
 if (demo) console.log('Demo mode: scenario generator started');
