@@ -5,6 +5,7 @@ import { World } from './world.js';
 import { registerMappingRoutes } from './mapping-routes.js';
 import { registerModelRoutes } from './model-routes.js';
 import { OpenCodePoller } from './sources/opencode-poller.js';
+import { HermesPoller } from './sources/hermes-poller.js';
 import { DockerPoller } from './sources/docker-poller.js';
 import { CliDockerClient } from './sources/docker-client.js';
 import { ArsenalPoller } from './arsenal/arsenal-poller.js';
@@ -59,6 +60,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   });
   let watchers: SourceWatcher[] = [];
   let opencodePoller: OpenCodePoller | undefined;
+  let hermesPoller: HermesPoller | undefined;
   let dockerPoller: DockerPoller | undefined;
   let arsenalPoller: ArsenalPoller | undefined;
   let liveSessions: LiveSessionRegistry | undefined;
@@ -88,10 +90,13 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     watchers = sources.map((source) => new SourceWatcher(world, source));
     // HTTP hooks are the Claude channel; route them to the Claude watcher.
     const claudeWatcher = watchers.find((w) => w.id === 'claude');
-    
+
     // OpenCode uses SQLite instead of JSONL: start poller.
     const opencodeEnabled = sources.some((source) => source.id === 'opencode');
     opencodePoller = opencodeEnabled ? new OpenCodePoller(world) : undefined;
+    // Hermes uses SQLite instead of JSONL: start poller.
+    const hermesEnabled = sources.some((source) => source.id === 'hermes');
+    hermesPoller = hermesEnabled ? new HermesPoller(world) : undefined;
     // Containerized Claude sessions are controlled by the Claude source filter.
     const dockerEnabled = sources.some((source) => source.id === 'claude');
     dockerPoller = dockerEnabled ? new DockerPoller(world, new CliDockerClient()) : undefined;
@@ -145,6 +150,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     app.addHook('onReady', async () => {
       for (const w of watchers) w.start();
       await opencodePoller?.start();
+      await hermesPoller?.start();
       // Fire-and-forget: Docker unavailability must not delay server readiness.
       void dockerPoller?.start();
       // `arsenal-updated` event to client (Arsenal panel).
@@ -226,6 +232,7 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
       offEvent();
       await liveSessions?.stopAll();
       await opencodePoller?.stop();
+      await hermesPoller?.stop();
       dockerPoller?.stop();
       await Promise.all(watchers.map((w) => w.stop()));
       arsenalPoller?.stop();

@@ -1,0 +1,54 @@
+{
+  "name": "@agent-citadel/electron",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HermesRealm Electron shell: wraps Age of Agents + Hermes CLI chat",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\"",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "electron": "^34.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron-builder": "^25.1.8",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.hermesrealm.app",
+    "productName": "HermesRealm",
+    "directories": {
+      "output": "../../dist/electron"
+    },
+    "files": [
+      "dist/**/*",
+      "../client/dist/**/*",
+      "../server/dist/**/*",
+      "!node_modules"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": null
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": null
+    }
+  }
+}

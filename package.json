@@ -40,10 +40,14 @@
     "build:web": "npm run build -w @agent-citadel/client",
     "build:server": "node scripts/build-server.mjs",
     "build": "npm run build:web && npm run build:server",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "electron:dev": "npm run dev -w @agent-citadel/electron",
+    "electron:build": "npm run build -w @agent-citadel/electron && electron-builder --config packages/electron/package.json"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
+    "electron": "^34.5.1",
+    "electron-builder": "^25.1.8",
     "esbuild": "^0.28.1",
     "pngjs": "^7.0.0"
   },
