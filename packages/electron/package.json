@@ -6,9 +6,9 @@
   "description": "HermesRealm Electron shell: wraps Age of Agents + Hermes CLI chat",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "build": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\"",
-    "start": "node dist/main.js"
+      "dev": "tsc && electron .",
+      "build": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\"",
+      "start": "electron dist/main.js"
   },
   "dependencies": {
     "electron": "^34.5.1"
