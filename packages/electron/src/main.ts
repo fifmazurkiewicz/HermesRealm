@@ -50,7 +50,7 @@ function startServer() {
     cwd: PROJECT_ROOT,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env: { ...process.env, AOA_HERMES_DB_PATH: 'D:\\Hermes\\state.db' },
   });
 
   serverProcess.stdout?.on('data', (data) => {
@@ -85,7 +85,7 @@ function startClient() {
     cwd: PROJECT_ROOT,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env: { ...process.env, AOA_HERMES_DB_PATH: 'D:\\Hermes\\state.db' },
   });
 
   clientProcess.stdout?.on('data', (data) => {
