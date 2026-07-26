@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HermesRealm — Chat</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      display: flex;
+      flex-direction: column;
+    }
+    #output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #output .stderr { color: #ff6b6b; }
+    #output .info { color: #888; }
+    #input-bar {
+      display: flex;
+      border-top: 1px solid #333;
+      background: #141414;
+      padding: 8px;
+    }
+    #input-bar .prompt {
+      color: #50fa7b;
+      padding: 6px 8px;
+      user-select: none;
+    }
+    #input-bar input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #e0e0e0;
+      font: inherit;
+      font-size: 14px;
+      padding: 4px 0;
+    }
+    #input-bar button {
+      background: #50fa7b;
+      color: #0d0d0d;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 4px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #input-bar button:hover { background: #69ff94; }
+    #input-bar button:disabled { background: #555; cursor: default; }
+    #status-bar {
+      padding: 4px 12px;
+      font-size: 11px;
+      color: #666;
+      border-top: 1px solid #222;
+    }
+    #status-bar.connected { color: #50fa7b; }
+    #status-bar.disconnected { color: #ff6b6b; }
+  </style>
+</head>
+<body>
+  <div id="output"></div>
+  <div id="input-bar">
+    <span class="prompt">&gt;</span>
+    <input id="cmd-input" type="text" placeholder="Type your message to Hermes…" autofocus />
+    <button id="send-btn">Send</button>
+  </div>
+  <div id="status-bar">Connecting…</div>
+
+  <script src="./chat-preload.js"></script>
+  <script>
+    /* global hermesRealmChat */
+
+    const output = document.getElementById('output');
+    const input = document.getElementById('cmd-input');
+    const sendBtn = document.getElementById('send-btn');
+    const statusBar = document.getElementById('status-bar');
+
+    // ── Output handling ──────────────────────────────────────────────────
+    function appendOutput(text, className) {
+      const span = document.createElement('span');
+      if (className) span.className = className;
+      span.textContent = text;
+      output.appendChild(span);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    // Listen for Hermes CLI stdout streaming.
+    if (window.hermesRealmChat) {
+      hermesRealmChat.onOutput((text) => {
+        appendOutput(text);
+      });
+    }
+
+    // ── Input handling ───────────────────────────────────────────────────
+    function send() {
+      const text = input.value.trim();
+      if (!text) return;
+      appendOutput('> ' + text + '\n', 'info');
+      if (window.hermesRealmChat) {
+        hermesRealmChat.sendInput(text);
+      }
+      input.value = '';
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); send(); }
+    });
+    sendBtn.addEventListener('click', send);
+
+    // ── Status ───────────────────────────────────────────────────────────
+    if (window.hermesRealmChat) {
+      hermesRealmChat.getStatus().then((status) => {
+        if (status.found) {
+          statusBar.textContent = `Hermes CLI: ${status.path}`;
+          statusBar.className ='connected';
+        } else {
+          statusBar.textContent = 'Hermes CLI not found! Check D:\\Hermes';
+          statusBar.className = 'disconnected';
+          appendOutput('[!] Hermes CLI not found. Please check D:\\Hermes setup.\n', 'stderr');
+        }
+      });
+    } else {
+      statusBar.textContent = 'IPC bridge not available (standalone mode)';
+      statusBar.className = 'disconnected';
+    }
+  </script>
+</body>
+</html>

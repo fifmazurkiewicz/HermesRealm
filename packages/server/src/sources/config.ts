@@ -8,6 +8,7 @@ const SOURCE_IDS: Record<SourceId, true> = {
   opencode: true,
   koda: true,
   'local-llm': true,
+  hermes: true,
 };
 const SOURCE_ID_SET: ReadonlySet<string> = new Set(Object.keys(SOURCE_IDS));
 
