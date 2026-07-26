@@ -74,6 +74,35 @@ function killServer() {
   if (serverProcess && serverProcess.exitCode === null) {
     serverProcess.kill('SIGTERM');
   }
+  if (clientProcess && clientProcess.exitCode === null) {
+    clientProcess.kill('SIGTERM');
+  }
+}
+
+// Vite client dev server
+function startClient() {
+  clientProcess = spawn('npm', ['run', 'dev', '-w', '@agent-citadel/client'], {
+    cwd: PROJECT_ROOT,
+    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env },
+  });
+
+  clientProcess.stdout?.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg.includes('Local') || msg.includes('localhost') || msg.includes('ready')) {
+      safeLog('log', `[client] ${msg}`);
+    }
+  });
+  clientProcess.stderr?.on('data', (data) => {
+    safeLog('error', `[client:err] ${data.toString().trim()}`);
+  });
+  clientProcess.on('exit', (code) => {
+    safeLog('log', `Client exited with code ${code}`);
+    clientProcess = null;
+  });
+
+  safeLog('log', `[electron] Client starting on port ${CLIENT_PORT}...`);
 }
 
 // Safe logger — prevents EPIPE crashes when child process pipes close
@@ -307,6 +336,7 @@ app.whenReady().then(() => {
   registerIpc();
   buildMenu();
   startServer();
+  startClient();
   createMainWindow();
 });
 
