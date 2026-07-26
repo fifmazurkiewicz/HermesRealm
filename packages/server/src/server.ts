@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { spawn } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { WS_PATH, type GameEvent, validateQuestionAnswer } from '@agent-citadel/shared';
 import { World } from './world.js';
@@ -80,8 +81,16 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     const { FakeSdkRunner } = await import('./sdk/fake-runner.js');
     liveSessions = new LiveSessionRegistry(new FakeSdkRunner(), (sessionId) => world.emitCustom({ type: 'sdk-session-started', sessionId }));
     registerSessionRoutes(app, { sessions: liveSessions });
-    registerFsRoutes(app);
-  } else {
+        registerFsRoutes(app);
+
+        // Hermes assign-task endpoint
+        app.post('/api/assign-task', async (request, reply) => {
+          const body = (request.body ?? {}) as { agent_role?: string; task_description?: string };
+          const task = body.task_description?.trim();
+          if (!task) return reply.code(400).send({ error: 'task_description is required' });
+          return { ok: true, pid: 0, message: `Task dispatched: ${task.slice(0, 80)}` };
+        });
+      }
     const { SourceWatcher } = await import('./watcher.js');
     const { activeSources } = await import('./sources/index.js');
     const { translateHook, hooksStatus, installHooks, uninstallHooks, DECIDE_TIMEOUT_SEC } = await import('./hooks.js');
@@ -112,9 +121,40 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     const { RealSdkRunner } = await import('./sdk/real-runner.js');
     liveSessions = new LiveSessionRegistry(new RealSdkRunner(pendingRegistry, (DECIDE_TIMEOUT_SEC - 10) * 1000), (sessionId) => world.emitCustom({ type: 'sdk-session-started', sessionId }));
     registerSessionRoutes(app, { sessions: liveSessions });
-    registerFsRoutes(app);
+        registerFsRoutes(app);
 
-    app.post('/hooks/decide', async (request) => {
+        // Hermes assign-task endpoint
+        app.post('/api/assign-task', async (request, reply) => {
+          const body = (request.body ?? {}) as { agent_role?: string; task_description?: string };
+          const task = body.task_description?.trim();
+          if (!task) return reply.code(400).send({ error: 'task_description is required' });
+          return { ok: true, pid: 0, message: `Task dispatched: ${task.slice(0, 80)}` };
+        });
+      }
+        // Hermes assign-task: spawn a hermes CLI process with the given prompt
+        app.post('/api/assign-task', async (request, reply) => {
+          const body = (request.body ?? {}) as { agent_role?: string; task_description?: string };
+          const role = body.agent_role?.trim();
+          const task = body.task_description?.trim();
+          if (!task) return reply.code(400).send({ error: 'task_description is required' });
+
+          const prompt = role
+            ? `You are ${role}. ${task}`
+            : task;
+
+          // Spawn hermes chat process (fire-and-forget)
+          const child = spawn('hermes', ['chat', '-q', prompt], {
+            detached: true,
+            stdio: 'ignore',
+            shell: true,
+          });
+          child.unref();
+
+          app.log.info({ role, task: task.slice(0, 100) }, 'Hermes task dispatched');
+          return { ok: true, pid: child.pid, message: `Task dispatched: ${task.slice(0, 80)}` };
+        });
+
+        app.post('/hooks/decide', async (request) => {
       const body = (request.body ?? {}) as never;
       // Animate the tool like the regular /hooks channel does.
       const translated = translateHook(body);

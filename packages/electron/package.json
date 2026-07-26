@@ -2,7 +2,7 @@
   "name": "@agent-citadel/electron",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "description": "HermesRealm Electron shell: wraps Age of Agents + Hermes CLI chat",
   "main": "dist/main.js",
   "scripts": {

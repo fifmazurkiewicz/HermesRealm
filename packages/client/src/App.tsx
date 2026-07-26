@@ -10,23 +10,27 @@ import { BuildingPanel } from './hud/BuildingPanel';
 import { ThemeSwitch } from './hud/ThemeSwitch';
 import { ZoomControls } from './hud/ZoomControls';
 import { ArchitectHall } from './hud/ArchitectHall';
+import { AgentPanel } from './hud/agent-panel';
+import { AgentListPanel } from './hud/agent-list';
 import './hud/hud.css';
 
 export function App() {
   return (
-    <div style={{ position: 'fixed', inset: 0, overflow: 'hidden' }}>
-      <GameCanvas />
-      <ThemeSwitch />
-      <ResourceBar />
-      <MissionLog />
-      <NotificationFeed />
-      <SidePanel />
-      <QuestionModal />
-      <BuildingPanel />
-      <ArchitectHall />
-      <Portraits />
-      <ZoomControls />
-      <Minimap />
-    </div>
-  );
+      <div style={{ position: 'fixed', inset: 0, overflow: 'hidden' }}>
+        <GameCanvas />
+        <ThemeSwitch />
+        <ResourceBar />
+        <MissionLog />
+        <NotificationFeed />
+        <SidePanel />
+        <AgentPanel />
+        <AgentListPanel />
+        <QuestionModal />
+        <BuildingPanel />
+        <ArchitectHall />
+        <Portraits />
+        <ZoomControls />
+        <Minimap />
+      </div>
+    );
 }
