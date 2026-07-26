@@ -1,11 +1,17 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { HeroSnapshot, HeroStateKind } from '@agent-citadel/shared';
 import { useWorld } from '../store';
 import { useSettings } from '../settings';
 import { teamColorHex } from '../game/placeholders';
-import { assignTask } from '../sessions';
+import { assignTask, chatWithHermes } from '../sessions';
 import { clip, formatK } from '../util';
 import { ProviderEmblem } from './ProviderEmblem';
+
+interface ChatMessage {
+  role: 'user' | 'hermes';
+  text: string;
+  ts: string;
+}
 
 /** Color + emoji per state. */
 const STATE_STYLE: Record<HeroStateKind, { color: string; emoji: string }> = {
@@ -19,10 +25,6 @@ const STATE_STYLE: Record<HeroStateKind, { color: string; emoji: string }> = {
   returning: { color: '#97c459', emoji: '🚶' },
 };
 
-/**
- * Estimation bar: visual progress bar for time-based task completion.
- * Data comes from historical stats stored on the server.
- */
 function EstimationBar({ pct, label }: { pct: number; label: string }) {
   const clamped = Math.max(0, Math.min(100, pct));
   return (
@@ -44,11 +46,6 @@ function EstimationBar({ pct, label }: { pct: number; label: string }) {
   );
 }
 
-/**
- * Agent panel: right-side HUD for Hermes agents with task assignment.
- * Shown when a Hermes agent is selected — extends the existing SidePanel concept
- * but focused on Hermes-specific interactions.
- */
 export function AgentPanel() {
   const selected = useWorld((s) => s.selectedSessionId);
   const hero = useWorld((s) => (selected ? s.heroes[selected] : undefined));
@@ -57,24 +54,51 @@ export function AgentPanel() {
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  // Chat state
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatSessionId, setChatSessionId] = useState<string | undefined>(undefined);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   // Only show for Hermes agents
   if (!selected || !hero || hero.agent !== 'hermes') return null;
 
   const st = STATE_STYLE[hero.state];
   const job = hero.state === 'working' ? hero.toolDetail ?? hero.currentTool : undefined;
 
-  const handleAssign = async () => {
-    const prompt = taskText.trim();
-    if (!prompt) return;
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
+
+  const handleSend = async () => {
+    const text = taskText.trim();
+    if (!text) return;
     setSending(true);
     setFeedback(null);
+
+    // Add user message to history immediately
+    const userMsg: ChatMessage = { role: 'user', text, ts: new Date().toISOString() };
+    setChatHistory((prev) => [...prev, userMsg]);
+    setTaskText('');
+
     try {
-      const result = await assignTask(hero.title, prompt);
+      const result = await chatWithHermes(text, chatSessionId);
       if (result.ok) {
-        setFeedback({ ok: true, msg: 'Task dispatched! Agent will appear as a new session.' });
-        setTaskText('');
+        if (result.session_id) setChatSessionId(result.session_id);
+        const hermesMsg: ChatMessage = {
+          role: 'hermes',
+          text: result.response ?? '(pusta odpowiedź)',
+          ts: new Date().toISOString(),
+        };
+        setChatHistory((prev) => [...prev, hermesMsg]);
       } else {
-        setFeedback({ ok: false, msg: result.error ?? 'Failed to assign task' });
+        const errMsg: ChatMessage = {
+          role: 'hermes',
+          text: `❌ ${result.error ?? 'Błąd'}` + (result.response ? `\n${result.response.slice(0, 200)}` : ''),
+          ts: new Date().toISOString(),
+        };
+        setChatHistory((prev) => [...prev, errMsg]);
+        setFeedback({ ok: false, msg: result.error ?? 'Błąd komunikacji' });
       }
     } catch {
       setFeedback({ ok: false, msg: 'Network error' });
@@ -83,16 +107,35 @@ export function AgentPanel() {
     }
   };
 
-  // Estimation: for now a placeholder, will show real data when historical stats are available
-  const estPct = 0; // placeholder
-  const estLabel = estPct > 0 ? `⏱️ ~45 min ████████░░░░ ${estPct}%` : '⏱️ No estimate yet';
+  const handleAssignFireAndForget = async () => {
+    const prompt = taskText.trim();
+    if (!prompt) return;
+    setSending(true);
+    setFeedback(null);
+    try {
+      const result = await assignTask(hero.title, prompt);
+      if (result.ok) {
+        setFeedback({ ok: true, msg: 'Task wysłany! Agent pojawi się jako nowa sesja.' });
+        setTaskText('');
+      } else {
+        setFeedback({ ok: false, msg: result.error ?? 'Błąd' });
+      }
+    } catch {
+      setFeedback({ ok: false, msg: 'Network error' });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const estPct = 0;
+  const estLabel = estPct > 0 ? `⏱️ ~45 min ████████░░░░ ${estPct}%` : '⏱️ Brak estymacji';
 
   return (
     <div className="hud-panel" style={{
       position: 'absolute',
       top: 12,
-      right: 364, // Offset from the main sidepanel
-      width: 300,
+      right: 364,
+      width: 320,
       maxHeight: 'calc(100vh - 100px)',
       display: 'flex',
       flexDirection: 'column',
@@ -120,9 +163,14 @@ export function AgentPanel() {
               {clip(hero.title, 22)}
             </strong>
             <ProviderEmblem agent={hero.agent} variant="pill" />
+            {chatSessionId && (
+              <div style={{ fontSize: 10, opacity: 0.5, marginTop: 1 }}>
+                sesja: {chatSessionId.slice(-12)}
+              </div>
+            )}
           </div>
         </div>
-        <button className="ghost" onClick={() => select(undefined)}>✕</button>
+        <button className="ghost" onClick={() => { select(undefined); setChatHistory([]); setChatSessionId(undefined); }}>✕</button>
       </div>
 
       {/* State badge */}
@@ -134,7 +182,7 @@ export function AgentPanel() {
       }}>
         <span style={{ fontSize: 14 }}>{st.emoji}</span>
         <span>
-          <b style={{ color: st.color }}>{st.color === '#5dcaa5' ? 'working' : hero.state}</b>
+          <b style={{ color: st.color }}>{hero.state}</b>
           {job ? <span style={{ opacity: 0.85 }}> · {clip(job, 36)}</span> : null}
         </span>
       </div>
@@ -151,22 +199,69 @@ export function AgentPanel() {
         </div>
       </div>
 
-      {/* Estimation bar */}
-      <div style={{ padding: '6px 0' }}>
-        <EstimationBar pct={estPct} label={estLabel} />
-      </div>
+      <EstimationBar pct={estPct} label={estLabel} />
 
-      {/* Assign task */}
+      {/* Chat history */}
+      {chatHistory.length > 0 && (
+        <div style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          borderTop: '1px solid #33332f',
+          borderBottom: '1px solid #33332f',
+          padding: '8px 0',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}>
+          {chatHistory.map((msg, i) => (
+            <div key={i} style={{
+              padding: '6px 8px',
+              background: msg.role === 'user' ? '#2a2926' : '#1f1e1a',
+              borderLeft: `2px solid ${msg.role === 'user' ? '#fac775' : '#5dcaa5'}`,
+              fontSize: 12,
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              <div style={{ fontSize: 10, opacity: 0.4, marginBottom: 2 }}>
+                {msg.role === 'user' ? 'Ty' : 'Hermes'}
+              </div>
+              {msg.text}
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+      )}
+
+      {/* Input area */}
       <div style={{ borderTop: '1px solid #33332f', paddingTop: 8 }}>
-        <div className="px" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.55, marginBottom: 6 }}>
-          Assign task
+        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+          <button
+            className="ghost"
+            onClick={handleAssignFireAndForget}
+            disabled={sending || !taskText.trim()}
+            style={{ fontSize: 10, opacity: 0.6, padding: '2px 6px' }}
+            title="Fire-and-forget: wysyła task bez oczekiwania na odpowiedź"
+          >
+            ⚡ Fire
+          </button>
+          <button
+            className="ghost"
+            onClick={() => { setChatHistory([]); setChatSessionId(undefined); }}
+            disabled={chatHistory.length === 0}
+            style={{ fontSize: 10, opacity: 0.6, padding: '2px 6px' }}
+            title="Wyczyść historię czatu"
+          >
+            ✕ Clear
+          </button>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
             value={taskText}
             onChange={(e) => setTaskText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void handleAssign(); }}
-            placeholder="What should the agent do?"
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend(); } }}
+            placeholder={chatSessionId ? 'Kontynuuj rozmowę...' : 'Napisz do Hermesa...'}
             disabled={sending}
             style={{
               flex: 1,
@@ -180,11 +275,11 @@ export function AgentPanel() {
           />
           <button
             className="ghost"
-            onClick={() => void handleAssign()}
+            onClick={() => void handleSend()}
             disabled={sending || !taskText.trim()}
-            style={{ whiteSpace: 'nowrap' }}
+            style={{ whiteSpace: 'nowrap', color: '#5dcaa5' }}
           >
-            {sending ? '...' : 'Send'}
+            {sending ? '...' : '▶'}
           </button>
         </div>
         {feedback && (
@@ -196,7 +291,7 @@ export function AgentPanel() {
           </div>
         )}
         <div style={{ fontSize: 10, opacity: 0.45, marginTop: 4 }}>
-          Spawns a new Hermes CLI session with your prompt
+          Enter — wyślij z odpowiedzią · ⚡ Fire — wyślij bez czekania · Shift+Enter — nowa linia
         </div>
       </div>
     </div>
