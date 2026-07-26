@@ -12,7 +12,18 @@ import { ZoomControls } from './hud/ZoomControls';
 import { ArchitectHall } from './hud/ArchitectHall';
 import { AgentPanel } from './hud/agent-panel';
 import { AgentListPanel } from './hud/agent-list';
+import { Component, type ReactNode } from 'react';
 import './hud/hud.css';
+
+/** Catches render errors so a single broken panel doesn't kill the whole app. */
+class PanelGuard extends Component<{ children: ReactNode }> {
+  state = { err: null as Error | null };
+  static getDerivedStateFromError(err: Error) { return { err }; }
+  render() {
+    if (this.state.err) return null; // silently hide broken panel
+    return this.props.children;
+  }
+}
 
 export function App() {
   return (
@@ -23,8 +34,8 @@ export function App() {
         <MissionLog />
         <NotificationFeed />
         <SidePanel />
-        <AgentPanel />
-        <AgentListPanel />
+        <PanelGuard><AgentPanel /></PanelGuard>
+        <PanelGuard><AgentListPanel /></PanelGuard>
         <QuestionModal />
         <BuildingPanel />
         <ArchitectHall />
