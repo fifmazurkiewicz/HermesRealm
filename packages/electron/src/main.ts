@@ -12,8 +12,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 
-// Paths
-const __dirname = path.resolve(__dirname);
+// Paths — __dirname is already available in CommonJS
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 /** Hermes CLI executable under D:\Hermes. */

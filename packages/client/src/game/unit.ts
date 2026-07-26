@@ -255,7 +255,7 @@ export class Unit {
             this.workingGlow.alpha = 0.55 + Math.sin(this.elapsed * 1.5) * 0.25;
             this.workingGlow.scale.set(1 + Math.sin(this.elapsed * 2) * 0.06);
           }
-      if (!this.animated) {
+          if (!this.animated) {
         this.body.rotation = 0;
         if (this.state === 'working') {
           // "praca": rytmiczne pochylenie (kucie/kopanie)
