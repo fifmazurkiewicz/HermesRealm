@@ -35,9 +35,11 @@ const HERMES_CLI = findHermesCli();
 let mainWindow = null;
 let chatWindow = null;
 let serverProcess = null;
+let clientProcess = null;
 let hermesProcess = null;
 
 const SERVER_PORT = 8123;
+const CLIENT_PORT = 5173;
 const CLIENT_DEV_URL = 'http://localhost:5173';
 let activeMode = 'visualization';
 
@@ -52,20 +54,20 @@ function startServer() {
   });
 
   serverProcess.stdout?.on('data', (data) => {
-    console.log(`[server] ${data.toString().trim()}`);
+    safeLog('log', `[server] ${data.toString().trim()}`);
   });
   serverProcess.stderr?.on('data', (data) => {
-    console.error(`[server:err] ${data.toString().trim()}`);
+    safeLog('error', `[server:err] ${data.toString().trim()}`);
   });
   serverProcess.on('error', (err) => {
-    console.error('Failed to start server:', err);
+    safeLog('error', 'Failed to start server:', err);
   });
   serverProcess.on('exit', (code) => {
-    console.log(`Server exited with code ${code}`);
+    safeLog('log', `Server exited with code ${code}`);
     serverProcess = null;
   });
 
-  console.log(`[electron] Server starting on port ${SERVER_PORT}...`);
+  safeLog('log', `[electron] Server starting on port ${SERVER_PORT}...`);
 }
 
 function killServer() {
@@ -74,11 +76,29 @@ function killServer() {
   }
 }
 
-// Hermes CLI chat lifecycle
+// Safe logger — prevents EPIPE crashes when child process pipes close
+function safeLog(level, ...args) {
+  try {
+    const fn = level === 'error' ? console.error : console.log;
+    fn(...args);
+  } catch (e) {
+    // EPIPE or similar — stdout/stderr pipe closed, ignore silently
+  }
+}
+
+// Prevent EPIPE from crashing the app
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') { /* swallowed */ }
+  else console.error('stdout error:', err);
+});
+process.stderr.on('error', (err) => {
+  if (err.code === 'EPIPE') { /* swallowed */ }
+  else console.error('stderr error:', err);
+});
 function startHermesCli() {
   if (hermesProcess) return;
   if (!HERMES_CLI) {
-    console.error('Hermes CLI not found. Expected at D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes');
+    safeLog('error', 'Hermes CLI not found. Expected at D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes');
     return;
   }
 
@@ -100,17 +120,17 @@ function startHermesCli() {
     }
   });
   hermesProcess.on('error', (err) => {
-    console.error('Hermes CLI error:', err);
+    safeLog('error', 'Hermes CLI error:', err);
   });
   hermesProcess.on('exit', (code) => {
-    console.log(`Hermes CLI exited with code ${code}`);
+    safeLog('log', `Hermes CLI exited with code ${code}`);
     hermesProcess = null;
     if (chatWindow && !chatWindow.isDestroyed()) {
       chatWindow.webContents.send('hermes:output', `\n[Hermes CLI exited with code ${code}]\n`);
     }
   });
 
-  console.log('[electron] Hermes CLI started');
+  safeLog('log', '[electron] Hermes CLI started');
 }
 
 function sendToHermes(text) {
