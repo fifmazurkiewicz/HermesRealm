@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { spawn } from 'node:child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { WS_PATH, type GameEvent, validateQuestionAnswer } from '@agent-citadel/shared';
 import { World } from './world.js';
@@ -17,6 +18,7 @@ import { registerSessionRoutes } from './session-routes.js';
 import { registerFsRoutes } from './fs-routes.js';
 import { loadOrCreateToken } from './security/token.js';
 import { registerSecurityGuard, verifyWsClient } from './security/guard.js';
+import { TaskTracker } from './task-tracker.js';
 
 export interface StartServerOptions {
   /** HTTP port. Pass 0 so the system picks a free one (useful in tests). */
@@ -54,7 +56,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   let resolvedPort = opts.port;
   registerSecurityGuard(app, { getPort: () => resolvedPort, token });
   const world = new World();
-  const pendingRegistry = new PendingRegistry(world);
+    const taskTracker = new TaskTracker();
+    const pendingRegistry = new PendingRegistry(world);
   world.onEvent((event) => {
     if (event.type === 'hero-removed') pendingRegistry.cancelForSession(event.sessionId);
   });
@@ -81,6 +84,14 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     liveSessions = new LiveSessionRegistry(new FakeSdkRunner(), (sessionId) => world.emitCustom({ type: 'sdk-session-started', sessionId }));
     registerSessionRoutes(app, { sessions: liveSessions });
     registerFsRoutes(app);
+
+    // Hermes assign-task (demo: simulate success)
+    app.post('/api/assign-task', async (request, reply) => {
+      const body = (request.body ?? {}) as { agent_role?: string; task_description?: string };
+      const task = body.task_description?.trim();
+      if (!task) return reply.code(400).send({ error: 'task_description is required' });
+      return { ok: true, pid: 0, message: `[demo] Task dispatched: ${task.slice(0, 80)}` };
+    });
   } else {
     const { SourceWatcher } = await import('./watcher.js');
     const { activeSources } = await import('./sources/index.js');
@@ -113,6 +124,131 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     liveSessions = new LiveSessionRegistry(new RealSdkRunner(pendingRegistry, (DECIDE_TIMEOUT_SEC - 10) * 1000), (sessionId) => world.emitCustom({ type: 'sdk-session-started', sessionId }));
     registerSessionRoutes(app, { sessions: liveSessions });
     registerFsRoutes(app);
+
+    // ---- Hermes endpoints: chat, assign-task, stop, list ----
+
+        /** POST /api/hermes/chat — wysyła wiadomość do Hermesa i zwraca odpowiedź */
+            app.post('/api/hermes/chat', async (request, reply) => {
+          const body = (request.body ?? {}) as { message?: string; session_id?: string };
+          const message = body.message?.trim();
+          if (!message) return reply.code(400).send({ ok: false, error: 'message is required' });
+
+          const resumeArgs = body.session_id ? ['--resume', body.session_id] : [];
+          const TIMEOUT_MS = 60_000;
+
+          const child = spawn('hermes', ['chat', '-Q', '-q', message, ...resumeArgs], {
+            cwd: 'D:\\Hermes',
+            shell: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+          });
+
+          if (child.pid) {
+            taskTracker.register(child.pid, {
+              sessionId: body.session_id ?? 'pending',
+              message,
+              startedAt: new Date(),
+              process: child,
+            });
+          }
+
+          let stdout = '';
+          let stderr = '';
+          child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+          child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+          try {
+            const result = await new Promise<{ ok: boolean; session_id: string; response: string; error?: string; pid?: number }>((resolve) => {
+              const timer = setTimeout(() => {
+                child.kill('SIGTERM');
+                resolve({ ok: false, session_id: body.session_id ?? '', response: stdout.slice(0, 500), error: 'timeout', pid: child.pid ?? undefined });
+              }, TIMEOUT_MS);
+
+              child.on('close', (code) => {
+                clearTimeout(timer);
+                if (child.pid) taskTracker.remove(child.pid);
+
+                // Parse session_id from first line: "session_id: 20260726_..."
+                const sessionIdMatch = stdout.match(/^session_id:\s*(\S+)/m);
+                const sessionId = sessionIdMatch?.[1] ?? body.session_id ?? '';
+
+                // Remove session_id line and trailing newlines from response
+                let response = stdout.replace(/^session_id:\s*\S+\s*/m, '').trim();
+                if (!response && stderr) response = stderr.trim();
+
+                if (code !== 0 && !response) {
+                  resolve({ ok: false, session_id: sessionId, response: stderr.trim() || `exit code ${code}`, error: `hermes exited with code ${code}`, pid: child.pid ?? undefined });
+                } else {
+                  resolve({ ok: code === 0, session_id: sessionId, response, pid: child.pid ?? undefined });
+                }
+              });
+
+              child.on('error', (err) => {
+                clearTimeout(timer);
+                if (child.pid) taskTracker.remove(child.pid);
+                resolve({ ok: false, session_id: body.session_id ?? '', response: '', error: err.message, pid: child.pid ?? undefined });
+              });
+            });
+
+            if (result.ok) {
+              app.log.info({ session_id: result.session_id }, 'Hermes chat response received');
+              return { ok: true, session_id: result.session_id, response: result.response, pid: result.pid };
+            } else {
+              return reply.code(result.error === 'timeout' ? 408 : 500).send(result);
+            }
+          } catch (err) {
+            return reply.code(500).send({ ok: false, error: err instanceof Error ? err.message : 'unknown error' });
+          }
+        });
+
+        /** POST /api/assign-task — kompatybilność wsteczna: fire-and-forget (bez odpowiedzi) */
+        app.post('/api/assign-task', async (request, reply) => {
+          const body = (request.body ?? {}) as { agent_role?: string; task_description?: string };
+          const role = body.agent_role?.trim();
+          const task = body.task_description?.trim();
+          if (!task) return reply.code(400).send({ error: 'task_description is required' });
+
+          const prompt = role ? `You are ${role}. ${task}` : task;
+
+          const child = spawn('hermes', ['chat', '-Q', '-q', prompt], {
+            detached: true,
+            stdio: 'ignore',
+            shell: true,
+            env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+          });
+          child.unref();
+
+          if (child.pid) {
+            taskTracker.register(child.pid, {
+              sessionId: 'pending',
+              message: prompt,
+              startedAt: new Date(),
+              process: child,
+            });
+            child.on('close', () => { if (child.pid) taskTracker.remove(child.pid); });
+            child.on('error', () => { if (child.pid) taskTracker.remove(child.pid); });
+          }
+
+          app.log.info({ role, task: task.slice(0, 100) }, 'Hermes task dispatched');
+          return { ok: true, pid: child.pid, message: `Task dispatched: ${task.slice(0, 80)}` };
+        });
+
+        /** POST /api/task/:pid/stop — zatrzymuje działający task */
+        app.post<{ Params: { pid: string } }>('/api/task/:pid/stop', async (request, reply) => {
+          const pid = parseInt(request.params.pid, 10);
+          if (isNaN(pid)) return reply.code(400).send({ ok: false, error: 'invalid pid' });
+          const wasRunning = taskTracker.kill(pid);
+          if (!wasRunning) return reply.code(404).send({ ok: false, error: 'task not found or already completed' });
+          app.log.info({ pid }, 'Task stopped by user');
+          return { ok: true, pid, was_running: true };
+        });
+
+        /** GET /api/tasks — lista aktywnych tasków */
+        app.get('/api/tasks', async () => {
+          return { tasks: taskTracker.list() };
+        });
+
+        /* ---- existing endpoints continue below ---- */
 
     app.post('/hooks/decide', async (request) => {
       const body = (request.body ?? {}) as never;
@@ -175,7 +311,17 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
     });
   }
 
-  await app.listen({ port: opts.port, host });
+  try {
+    await app.listen({ port: opts.port, host });
+  } catch (err) {
+    // tsx watch restarts may race with the previous instance still releasing
+    // the port — EADDRINUSE is harmless when the old server is still running.
+    if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      app.log.warn(`Port ${opts.port} already in use — server likely already running (tsx watch restart race)`);
+      return;
+    }
+    throw err;
+  }
 
   const address = app.server.address();
   const actualPort = typeof address === 'object' && address ? address.port : opts.port;
@@ -184,8 +330,8 @@ export async function startServer(opts: StartServerOptions): Promise<RunningServ
   const wss = new WebSocketServer({
     server: app.server,
     path: WS_PATH,
-    verifyClient: (info) =>
-      verifyWsClient({ origin: info.origin, reqUrl: info.req.url }, resolvedPort, token),
+    verifyClient: (info: { origin: string; req: { url?: string } }) =>
+          verifyWsClient({ origin: info.origin, reqUrl: info.req.url }, resolvedPort, token),
   });
 
   const send = (socket: WebSocket, event: GameEvent): void => {

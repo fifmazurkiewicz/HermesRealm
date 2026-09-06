@@ -31,6 +31,8 @@ export class Unit {
   private animated?: AnimatedSprite;
   private sheet?: Spritesheet;
   private aura = new Graphics();
+  private workingGlow = new Graphics();
+  private thinkingIcon: Text;
   private crate = new Graphics();
   private teamRing = new Graphics();
   private selectionRing = new Graphics();
@@ -89,7 +91,18 @@ export class Unit {
     this.selectionRing.visible = false;
 
     this.aura.circle(0, -12, 18).fill({ color: 0x7f77dd, alpha: 0.25 });
-    this.aura.visible = false;
+        this.aura.visible = false;
+
+        // Working glow: subtle green pulse around hero when actively working
+        this.workingGlow.circle(0, -10, 14).fill({ color: 0x5dcaa5, alpha: 0.12 });
+        this.workingGlow.circle(0, -10, 19).fill({ color: 0x5dcaa5, alpha: 0.06 });
+        this.workingGlow.visible = false;
+
+        // Thinking icon: 💭 bubble above head
+        this.thinkingIcon = new Text({ text: '💭', style: { ...labelStyle, fontSize: 14 } });
+        this.thinkingIcon.anchor.set(0.5, 1);
+        this.thinkingIcon.position.set(0, -52);
+        this.thinkingIcon.visible = false;
 
     // "loot" crate: peon carries it while returning to the hero
     this.crate.rect(-5, -8, 10, 8).fill(0x8a5a2a);
@@ -115,7 +128,7 @@ export class Unit {
     this.contextBar.visible = false;
     this.contextBar.addChild(this.contextTrack, this.contextFill);
 
-    this.container.addChild(this.aura, this.selectionRing, this.teamRing, this.body, this.crate, this.contextBar, this.overlay, this.bubble, this.nameTag);
+    this.container.addChild(this.aura, this.workingGlow, this.thinkingIcon, this.selectionRing, this.teamRing, this.body, this.crate, this.contextBar, this.overlay, this.bubble, this.nameTag);
 
     const badge = buildAgentBadge(agent);
     if (badge) this.container.addChild(badge);
@@ -180,10 +193,12 @@ export class Unit {
   }
 
   setState(state: HeroStateKind, bubbleText?: string): void {
-    this.state = state;
-    this.aura.visible = state === 'thinking';
-    this.overlay.text = state === 'awaiting-input' ? '!' : state === 'error' ? '✶' : state === 'recovering' ? '+' : state === 'sleeping' ? 'zzz' : '';
-    this.overlay.style.fill = state === 'awaiting-input' ? 0xfac775 : state === 'error' ? 0xe24b4a : state === 'recovering' ? 0xe06080 : 0xb4b2a9;
+      this.state = state;
+      this.aura.visible = state === 'thinking';
+      this.workingGlow.visible = state === 'working';
+      this.thinkingIcon.visible = state === 'thinking';
+      this.overlay.text = state === 'awaiting-input' ? '!' : state === 'error' ? '✶' : state === 'recovering' ? '+' : state === 'sleeping' ? 'zzz' : '';
+      this.overlay.style.fill = state === 'awaiting-input' ? 0xfac775 : state === 'error' ? 0xe24b4a : state === 'recovering' ? 0xe06080 : 0xb4b2a9;
     const newBubble = bubbleText ? clip(bubbleText, 34) : '';
     if (newBubble !== this.bubble.text) {
       this.bubble.text = newBubble;
@@ -230,11 +245,17 @@ export class Unit {
         this.body.position.y = -Math.abs(Math.sin(this.elapsed * 14)) * 2;
       }
     } else {
-      // "thinking" aura pulse works for both variants (engine overlay, not body)
-      if (this.state === 'thinking') {
-        this.aura.scale.set(1 + Math.sin(this.elapsed * 3) * 0.12);
-      }
-      if (!this.animated) {
+          // "thinking" aura pulse works for both variants (engine overlay, not body)
+          if (this.state === 'thinking') {
+            this.aura.scale.set(1 + Math.sin(this.elapsed * 3) * 0.12);
+            this.thinkingIcon.position.y = -52 + Math.sin(this.elapsed * 1.8) * 2;
+          }
+          // Working glow: calm green pulse, slower and gentler
+          if (this.state === 'working') {
+            this.workingGlow.alpha = 0.55 + Math.sin(this.elapsed * 1.5) * 0.25;
+            this.workingGlow.scale.set(1 + Math.sin(this.elapsed * 2) * 0.06);
+          }
+          if (!this.animated) {
         this.body.rotation = 0;
         if (this.state === 'working') {
           // "praca": rytmiczne pochylenie (kucie/kopanie)

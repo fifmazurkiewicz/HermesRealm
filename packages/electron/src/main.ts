@@ -2,24 +2,21 @@
  * HermesRealm Electron main process.
  *
  * - Wraps the Age of Agents server + client in a BrowserWindow.
- * - Provides a "Visualization" ↔ "Chat" toggle via the app menu.
+ * - Provides a "Visualization" / "Chat" toggle via the app menu.
  * - Chat mode spawns the Hermes CLI as a child process and pipes
- *   user input → stdin, stdout → output area.
+ *   user input -> stdin, stdout -> output area.
  */
 
-import { app, BrowserWindow, Menu, ipcMain, dialog } from 'electron';
-import { spawn, type ChildProcess } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import fs from 'node:fs';
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+const fs = require('node:fs');
 
-// ── Paths ────────────────────────────────────────────────────────────────────
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Paths — __dirname is already available in CommonJS
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 /** Hermes CLI executable under D:\Hermes. */
-function findHermesCli(): string | null {
-  // Check common locations inside D:\Hermes.
+function findHermesCli() {
   const candidates = [
     'D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes.exe',
     'D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes',
@@ -29,79 +26,111 @@ function findHermesCli(): string | null {
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
-  // Try PATH-resolved names on Windows via where.
-  try {
-    const result = spawn('where', ['hermes'], {
-      shell: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    // Synchronous check: `where` may be async; prefer the known path.
-  } catch {
-    /* not found */
-  }
   return null;
 }
 
 const HERMES_CLI = findHermesCli();
 
-// ── State ────────────────────────────────────────────────────────────────────
-let mainWindow: BrowserWindow | null = null;
-let chatWindow: BrowserWindow | null = null;
-let serverProcess: ChildProcess | null = null;
-let hermesProcess: ChildProcess | null = null;
+// State
+let mainWindow = null;
+let chatWindow = null;
+let serverProcess = null;
+let clientProcess = null;
+let hermesProcess = null;
 
 const SERVER_PORT = 8123;
-const CLIENT_DEV_URL = `http://localhost:5173`;
-const MODES = ['visualization', 'chat'] as const;
-type AppMode = (typeof MODES)[number];
-let activeMode: AppMode = 'visualization';
+const CLIENT_PORT = 5173;
+const CLIENT_DEV_URL = 'http://localhost:5173';
+let activeMode = 'visualization';
 
-// ── Server lifecycle ─────────────────────────────────────────────────────────
-function startServer(): void {
-  // In dev, use tsx to run the server; in production, use node on built output.
+// Server lifecycle
+function startServer() {
   const serverDir = path.join(PROJECT_ROOT, 'packages', 'server');
-  // Prefer `npm run dev` via the root workspace so we don't reinvent the dev pipeline.
   serverProcess = spawn('npm', ['run', 'dev', '-w', '@agent-citadel/server'], {
     cwd: PROJECT_ROOT,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env },
+    env: { ...process.env, AOA_HERMES_DB_PATH: 'D:\\Hermes\\state.db' },
   });
 
-  serverProcess.stdout?.on('data', (data: Buffer) => {
-    console.log(`[server] ${data.toString().trim()}`);
+  serverProcess.stdout?.on('data', (data) => {
+    safeLog('log', `[server] ${data.toString().trim()}`);
   });
-  serverProcess.stderr?.on('data', (data: Buffer) => {
-    console.error(`[server:err] ${data.toString().trim()}`);
+  serverProcess.stderr?.on('data', (data) => {
+    safeLog('error', `[server:err] ${data.toString().trim()}`);
   });
   serverProcess.on('error', (err) => {
-    console.error('Failed to start server:', err);
+    safeLog('error', 'Failed to start server:', err);
   });
   serverProcess.on('exit', (code) => {
-    console.log(`Server exited with code ${code}`);
+    safeLog('log', `Server exited with code ${code}`);
     serverProcess = null;
   });
 
-  console.log(`[electron] Server starting on port ${SERVER_PORT}...`);
+  safeLog('log', `[electron] Server starting on port ${SERVER_PORT}...`);
 }
 
-function killServer(): void {
+function killServer() {
   if (serverProcess && serverProcess.exitCode === null) {
     serverProcess.kill('SIGTERM');
-    // On Windows, tree-kill is ideal but SIGTERM works in many cases.
+  }
+  if (clientProcess && clientProcess.exitCode === null) {
+    clientProcess.kill('SIGTERM');
   }
 }
 
-// ── Hermes CLI chat lifecycle ────────────────────────────────────────────────
-function startHermesCli(): void {
-  if (hermesProcess) return; // already running
+// Vite client dev server
+function startClient() {
+  clientProcess = spawn('npm', ['run', 'dev', '-w', '@agent-citadel/client'], {
+    cwd: PROJECT_ROOT,
+    shell: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, AOA_HERMES_DB_PATH: 'D:\\Hermes\\state.db' },
+  });
+
+  clientProcess.stdout?.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg.includes('Local') || msg.includes('localhost') || msg.includes('ready')) {
+      safeLog('log', `[client] ${msg}`);
+    }
+  });
+  clientProcess.stderr?.on('data', (data) => {
+    safeLog('error', `[client:err] ${data.toString().trim()}`);
+  });
+  clientProcess.on('exit', (code) => {
+    safeLog('log', `Client exited with code ${code}`);
+    clientProcess = null;
+  });
+
+  safeLog('log', `[electron] Client starting on port ${CLIENT_PORT}...`);
+}
+
+// Safe logger — prevents EPIPE crashes when child process pipes close
+function safeLog(level, ...args) {
+  try {
+    const fn = level === 'error' ? console.error : console.log;
+    fn(...args);
+  } catch (e) {
+    // EPIPE or similar — stdout/stderr pipe closed, ignore silently
+  }
+}
+
+// Prevent EPIPE from crashing the app
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') { /* swallowed */ }
+  else console.error('stdout error:', err);
+});
+process.stderr.on('error', (err) => {
+  if (err.code === 'EPIPE') { /* swallowed */ }
+  else console.error('stderr error:', err);
+});
+function startHermesCli() {
+  if (hermesProcess) return;
   if (!HERMES_CLI) {
-    console.error('Hermes CLI not found. Expected at D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes');
+    safeLog('error', 'Hermes CLI not found. Expected at D:\\Hermes\\hermes-agent\\venv\\Scripts\\hermes');
     return;
   }
 
-  // Launch hermes in interactive mode via PTY-like approach.
-  // Note: `hermes chat` is the single-query mode; for interactive chat we use `hermes`.
   hermesProcess = spawn(HERMES_CLI, ['chat'], {
     cwd: 'D:\\Hermes',
     shell: true,
@@ -109,45 +138,45 @@ function startHermesCli(): void {
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
 
-  hermesProcess.stdout?.on('data', (data: Buffer) => {
+  hermesProcess.stdout?.on('data', (data) => {
     if (chatWindow && !chatWindow.isDestroyed()) {
       chatWindow.webContents.send('hermes:output', data.toString());
     }
   });
-  hermesProcess.stderr?.on('data', (data: Buffer) => {
+  hermesProcess.stderr?.on('data', (data) => {
     if (chatWindow && !chatWindow.isDestroyed()) {
       chatWindow.webContents.send('hermes:output', `[stderr] ${data.toString()}`);
     }
   });
   hermesProcess.on('error', (err) => {
-    console.error('Hermes CLI error:', err);
+    safeLog('error', 'Hermes CLI error:', err);
   });
   hermesProcess.on('exit', (code) => {
-    console.log(`Hermes CLI exited with code ${code}`);
+    safeLog('log', `Hermes CLI exited with code ${code}`);
     hermesProcess = null;
     if (chatWindow && !chatWindow.isDestroyed()) {
       chatWindow.webContents.send('hermes:output', `\n[Hermes CLI exited with code ${code}]\n`);
     }
   });
 
-  console.log('[electron] Hermes CLI started');
+  safeLog('log', '[electron] Hermes CLI started');
 }
 
-function sendToHermes(text: string): void {
+function sendToHermes(text) {
   if (hermesProcess && hermesProcess.stdin && hermesProcess.exitCode === null) {
     hermesProcess.stdin.write(text + '\n');
   }
 }
 
-function killHermes(): void {
+function killHermes() {
   if (hermesProcess && hermesProcess.exitCode === null) {
     hermesProcess.kill('SIGTERM');
     hermesProcess = null;
   }
 }
 
-// ── Window management ────────────────────────────────────────────────────────
-function createMainWindow(): void {
+// Window management
+function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -162,7 +191,6 @@ function createMainWindow(): void {
     },
   });
 
-  // In dev, load from Vite dev server; in production, load built HTML.
   const isDev = !app.isPackaged;
   if (isDev) {
     mainWindow.loadURL(CLIENT_DEV_URL);
@@ -175,14 +203,13 @@ function createMainWindow(): void {
     mainWindow = null;
   });
 
-  // Remove default title suffix.
   mainWindow.on('page-title-updated', (e) => {
     e.preventDefault();
   });
   mainWindow.setTitle('HermesRealm');
 }
 
-function createChatWindow(): void {
+function createChatWindow() {
   if (chatWindow && !chatWindow.isDestroyed()) {
     chatWindow.focus();
     return;
@@ -209,13 +236,12 @@ function createChatWindow(): void {
     killHermes();
   });
 
-  // Only start Hermes CLI when chat window opens.
   startHermesCli();
 }
 
-// ── Menu ─────────────────────────────────────────────────────────────────────
-function buildMenu(): void {
-  const template: Electron.MenuItemConstructorOptions[] = [
+// Menu
+function buildMenu() {
+  const template = [
     {
       label: 'File',
       submenu: [
@@ -226,7 +252,6 @@ function buildMenu(): void {
       label: 'View',
       submenu: [
         {
-          id: 'mode-visualization',
           label: 'Visualization',
           type: 'radio',
           checked: activeMode === 'visualization',
@@ -236,7 +261,6 @@ function buildMenu(): void {
           },
         },
         {
-          id: 'mode-chat',
           label: 'Chat',
           type: 'radio',
           checked: activeMode === 'chat',
@@ -274,23 +298,21 @@ function buildMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
-// ── IPC handlers ─────────────────────────────────────────────────────────────
-function registerIpc(): void {
-  // Chat window sends user input to Hermes CLI.
-  ipcMain.on('hermes:input', (_event, text: string) => {
+// IPC handlers
+function registerIpc() {
+  ipcMain.on('hermes:input', (_event, text) => {
     if (hermesProcess) {
       sendToHermes(text);
     } else if (HERMES_CLI) {
-      // Hermes CLI not started yet (e.g., one-shot mode: spawn with -q).
       hermesProcess = spawn(HERMES_CLI, ['chat', '-q', text], {
         cwd: 'D:\\Hermes',
         shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
-      const chunks: string[] = [];
-      hermesProcess.stdout?.on('data', (d: Buffer) => chunks.push(d.toString()));
-      hermesProcess.stderr?.on('data', (d: Buffer) => chunks.push(`[stderr] ${d.toString()}`));
+      const chunks = [];
+      hermesProcess.stdout?.on('data', (d) => chunks.push(d.toString()));
+      hermesProcess.stderr?.on('data', (d) => chunks.push(`[stderr] ${d.toString()}`));
       hermesProcess.on('close', () => {
         if (chatWindow && !chatWindow.isDestroyed()) {
           chatWindow.webContents.send('hermes:output', chunks.join(''));
@@ -300,7 +322,6 @@ function registerIpc(): void {
     }
   });
 
-  // Get Hermes CLI status.
   ipcMain.handle('hermes:status', () => {
     return {
       found: HERMES_CLI !== null,
@@ -310,22 +331,18 @@ function registerIpc(): void {
   });
 }
 
-// ── App lifecycle ────────────────────────────────────────────────────────────
+// App lifecycle
 app.whenReady().then(() => {
   registerIpc();
   buildMenu();
-
-  // Start the AoA server backend.
   startServer();
-
-  // Give server a head start, then create main window.
+  startClient();
   createMainWindow();
 });
 
 app.on('window-all-closed', () => {
   killServer();
   killHermes();
-  // On macOS, apps typically stay active until Cmd+Q.
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -335,7 +352,6 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
-  // macOS: re-create window when dock icon clicked.
   if (BrowserWindow.getAllWindows().length === 0) {
     createMainWindow();
   }

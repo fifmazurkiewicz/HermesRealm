@@ -2,13 +2,13 @@
   "name": "@agent-citadel/electron",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "description": "HermesRealm Electron shell: wraps Age of Agents + Hermes CLI chat",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "build": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\"",
-    "start": "node dist/main.js"
+      "dev": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\" && electron .",
+      "build": "tsc && node -e \"require('fs').cpSync('src/chat.html','dist/chat.html')\"",
+      "start": "electron dist/main.js"
   },
   "dependencies": {
     "electron": "^34.5.1"

@@ -464,7 +464,13 @@ export class GameView {
         unit.container.eventMode = 'static';
         unit.container.cursor = 'pointer';
         const sessionId = hero.sessionId;
-        unit.container.on('pointertap', () => useWorld.getState().select(sessionId));
+        unit.container.on('pointertap', () => {
+          try {
+            useWorld.getState().select(sessionId);
+          } catch (err) {
+            console.error('select crash:', err);
+          }
+        });
         this.units.set(hero.sessionId, unit);
         this.unitLayer.addChild(unit.container);
         // Remember the social home separately from the last work building.

@@ -98,6 +98,10 @@ export function SidePanel() {
 
   if (!selected || !hero) return null;
 
+  // Hermes agents have their own dedicated panel (AgentPanel) with chat —
+  // don't render the generic SidePanel for them.
+  if (hero.agent === 'hermes') return null;
+
   const now = Date.now();
   const st = STATE_STYLE[hero.state];
   const job = hero.state === 'working' ? hero.toolDetail ?? hero.currentTool : undefined;
