@@ -25,6 +25,60 @@ export async function sendSessionMessage(sessionId: string, text: string): Promi
   }).catch(() => {});
 }
 
+/** Assign a task to a Hermes agent: spawns a Hermes CLI process with the given prompt. */
+export async function assignTask(agentRole: string, taskDescription: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch('/api/assign-task', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agent_role: agentRole, task_description: taskDescription }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'network error' };
+  }
+}
+
+/** Chat with Hermes: sends a message and returns the response. */
+export async function chatWithHermes(message: string, sessionId?: string): Promise<{
+  ok: boolean;
+  session_id?: string;
+  response?: string;
+  error?: string;
+  pid?: number;
+}> {
+  try {
+    const res = await apiFetch('/api/hermes/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, session_id: sessionId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}`, session_id: body.session_id, response: body.response, pid: body.pid };
+    return body;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'network error' };
+  }
+}
+
+/** Stop a running Hermes task by PID. */
+export async function stopTask(pid: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(`/api/task/${pid}/stop`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'network error' };
+  }
+}
+
+/** List active Hermes tasks. */
+export async function listTasks(): Promise<{ tasks: Array<{ pid: number; sessionId: string; message: string; startedAt: string; elapsedMs: number }> }> {
+  const res = await apiFetch('/api/tasks');
+  return res.json();
+}
+
 export async function sdkAvailable(): Promise<boolean> {
   try { const r = await fetch('/sessions'); return (await r.json()).available === true; } catch { return false; }
 }

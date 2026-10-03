@@ -62,11 +62,15 @@ export class SourceWatcher {
   }
 
   start(): void {
-    this.refreshRoots();
-    if (this.roots.length === 0) {
-      console.error('[watcher]', this.source.id, 'no roots configured; source disabled');
-      return;
-    }
+      this.refreshRoots();
+      if (this.roots.length === 0) {
+        // Sources without file roots (hermes, opencode, koda) use DB/API polling
+        // instead of file watching — not an error, just a different data source.
+        if (process.env.AOA_SOURCES) {
+          console.log('[watcher]', this.source.id, 'no file roots — poller-based source (not an error)');
+        }
+        return;
+      }
     this.watcher = watch(this.roots, {
       depth: this.source.depth ?? 6,
       ignoreInitial: false,

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { Fact } from '../transcript/facts.js';
-import { rootIfExists } from './config.js';
 import type { AgentSource, ClassifiedFile } from './types.js';
 
 /**
@@ -296,8 +296,7 @@ export function getHermesDbPath(env: NodeJS.ProcessEnv = process.env): string | 
   // Default Windows location
   const defaultPath = join('D:', 'Hermes', 'state.db');
   try {
-    const roots = rootIfExists(defaultPath);
-    if (roots.length > 0) return defaultPath;
+    if (existsSync(defaultPath)) return defaultPath;
   } catch {
     /* ignore */
   }
